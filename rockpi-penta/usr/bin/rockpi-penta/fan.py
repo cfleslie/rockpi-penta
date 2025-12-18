@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os.path
+import os
 import time
 import traceback
 import threading
@@ -47,8 +47,17 @@ class Pwm:
 
 class Gpio:
 
+    def __init__(self, period_s):
+        self.is_zero_duty = False
+        self.gpio = os.environ['FAN_CHIP']
+        self.line = int(os.environ['FAN_LINE'])
+        self.value = [period_s, 0]
+        self.period_s = period_s
+        self.thread = threading.Thread(target=self._tr, daemon=True)
+        self.thread.start()
+
+
     def _tr(self):
-        
         setting = gpiod.LineSettings(
                     direction=gpiod.line.Direction.OUTPUT, 
                     output_value=gpiod.line.Value.INACTIVE)
@@ -59,24 +68,25 @@ class Gpio:
             config={ self.line: setting },
         ) as request:
             while True:
-                request.set_value(self.line, gpiod.line.Value.ACTIVE)
-                time.sleep(self.value[0])
-                request.set_value(self.line, gpiod.line.Value.INACTIVE)
-                time.sleep(self.value[1])
-
-    
-    def __init__(self, period_s):
-
-        self.gpio = os.environ['FAN_CHIP']
-        self.line = int(os.environ['FAN_LINE'])
-        self.value = [period_s / 2, period_s / 2]
-        self.period_s = period_s
-        self.thread = threading.Thread(target=self._tr, daemon=True)
-        self.thread.start()
+                if self.is_zero_duty:
+                    request.set_value(self.line, gpiod.line.Value.INACTIVE)
+                    time.sleep(self.period_s)
+                else:
+                    request.set_value(self.line, gpiod.line.Value.ACTIVE)
+                    time.sleep(self.value[0])
+                    request.set_value(self.line, gpiod.line.Value.INACTIVE)
+                    time.sleep(self.value[1])
 
     def write(self, duty):
-        self.value[1] = duty * self.period_s
-        self.value[0] = self.period_s - self.value[1]
+        if duty > 0.99:
+            self.is_zero_duty = True
+            self.value[0] = 0.0 
+            self.value[1] = self.period_s
+        else:
+            self.is_zero_duty = False
+            duty = min(duty, 1.0) # Hard code duty cycle at 1.0
+            self.value[1] = duty * self.period_s
+            self.value[0] = self.period_s - self.value[1]
 
 
 def read_temp():
